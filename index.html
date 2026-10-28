@@ -55,6 +55,12 @@ button.active { border-color: var(--accent); color: var(--accent); }
 .pad .meta { font-family: var(--mono); font-size: 0.66rem; color: var(--muted); display: flex; justify-content: space-between; gap: 4px; }
 .pad.hit { background: var(--c); box-shadow: 0 0 22px var(--c); transform: scale(0.97); transition: none; color: #111; }
 .pad.hit .meta { color: #111a; }
+.pad.empty { box-shadow: none; opacity: 0.45; cursor: default; }
+.grid.cols8 { width: min(100%, 640px); gap: 6px; padding: 10px; }
+.grid.cols8 .pad { padding: 4px; border-radius: 5px; }
+.grid.cols8 .pad .name { font-size: clamp(0.5rem, 1.3vw, 0.7rem); }
+.grid.cols8 .pad .meta { font-size: 0.55rem; }
+@media (max-width: 560px) { .grid.cols8 .pad .meta { display: none; } }
 .pad.learning { outline: 2px dashed var(--accent); outline-offset: 2px; }
 .legend { color: var(--muted); font-size: 0.8rem; text-align: center; margin: 0; }
 .log { font-family: var(--mono); font-size: 0.76rem; display: grid; gap: 2px; max-height: 340px; overflow-y: auto; margin: 0; padding: 0; list-style: none; font-variant-numeric: tabular-nums; }
@@ -91,17 +97,32 @@ button.active { border-color: var(--accent); color: var(--accent); }
         <button id="progBtn" title="Switches a Launchpad X / Mini MK3 / Pro MK3 into Programmer mode so this page can light its pads">Launchpad: Programmer mode</button>
         <button id="ledTestBtn">Light pads</button>
       </div>
+      <label for="layoutSel">Grid layout
+        <select id="layoutSel">
+          <option value="auto">Match my controller</option>
+          <option value="kit">4×4 kit</option>
+          <option value="launchpad">Launchpad 8×8</option>
+          <option value="launchkey">Launchkey 2×8</option>
+        </select>
+      </label>
+      <label for="modeSel">Launchpad mode
+        <select id="modeSel">
+          <option value="drum">Drum / note mode</option>
+          <option value="prog">Programmer mode (lights work)</option>
+        </select>
+      </label>
       <h2>Pad mapping</h2>
       <div class="row">
         <button id="learnBtn">Learn pads</button>
         <button id="resetMapBtn">Reset mapping</button>
       </div>
-      <p class="hint" id="learnHint">Default: notes <code>36–51</code> (Launchpad Drum mode, Launchkey drum pads) and Launchpad Programmer mode bottom-left 4×4 (<code>11–44</code>). Learn: click a pad on screen, then hit the pad you want on your controller.</p>
+      <p class="hint" id="learnHint">The grid follows your controller. On a Launchpad the kit sits in both bottom quadrants and the top half is free. Learn: click a pad on screen, then hit the pad you want on your controller.</p>
     </section>
 
     <section class="stage" aria-label="Drum pads">
+      <p class="legend">Showing <b id="layoutName">4×4 kit</b></p>
       <div class="grid" id="grid"></div>
-      <p class="legend">Keyboard: <span class="mono">1 2 3 4 / Q W E R / A S D F / Z X C V</span> (top row to bottom row)</p>
+      <p class="legend">Keyboard: <span class="mono">1 2 3 4 / Q W E R / A S D F / Z X C V</span> play the 16 sounds from top row to bottom row</p>
     </section>
 
     <section class="panel" aria-labelledby="log-h">
@@ -137,17 +158,53 @@ const KIT = [
   { id: 'zap',   name: 'Zap',         c: '#5effc0', led: 29 },
 ];
 const KEYS = ['z','x','c','v','a','s','d','f','q','w','e','r','1','2','3','4'];
-// Launchpad Programmer mode: note = 10*row + col (row/col from 1, bottom-left = 11)
-const progNote = i => 10 * (Math.floor(i / 4) + 1) + (i % 4) + 1;
+// Controller layouts. Rows count from the bottom. Each cell has the note it sends in drum mode and,
+// for Launchpads, in Programmer mode (10*row + col, bottom-left = 11). The two note sets overlap,
+// so each mode keeps its own note -> sound map.
+const LP_QUAD = [36, 52, 68, 84];
+const LAYOUTS = {
+  kit: { label: '4×4 kit', rows: 4, cols: 4, cell: (r, c) => {
+    const i = r * 4 + c; return { drum: 36 + i, prog: 10 * (r + 1) + c + 1, sound: i }; } },
+  launchpad: { label: 'Launchpad 8×8', rows: 8, cols: 8, cell: (r, c) => {
+    const q = (r >= 4 ? 2 : 0) + (c >= 4 ? 1 : 0), k = (r % 4) * 4 + (c % 4);
+    // Kit in the bottom-left quadrant, mirrored bottom-right so either hand can reach it; top half free for Learn
+    return { drum: LP_QUAD[q] + k, prog: 10 * (r + 1) + c + 1, sound: q < 2 ? k : null }; } },
+  launchkey: { label: 'Launchkey 2×8', rows: 2, cols: 8, cell: (r, c) => {
+    // Launchkey drum mode: two 4×2 blocks, 36–39/40–43 on the left, 44–47/48–51 on the right
+    const n = 36 + (c >= 4 ? 8 : 0) + r * 4 + (c % 4); return { drum: n, prog: null, sound: n - 36 }; } },
+};
+function cellsOf(name) {
+  const L = LAYOUTS[name], out = [];
+  for (let r = 0; r < L.rows; r++) for (let c = 0; c < L.cols; c++) {
+    const cell = { r, c, ...L.cell(r, c) };
+    cell.notes = [noteMode === 'prog' && cell.prog ? cell.prog : cell.drum];
+    out.push(cell);
+  }
+  return out;
+}
 
-function defaultMap() {
+function defaultMap(mode) {
   const m = {};
-  KIT.forEach((_, i) => { m[36 + i] = i; m[progNote(i)] = i; });
+  Object.keys(LAYOUTS).forEach(name => Object.values(cellsFor(name, mode)).forEach(cell => {
+    const n = mode === 'prog' ? cell.prog : cell.drum;
+    if (cell.sound !== null && n && m[n] === undefined) m[n] = cell.sound;
+  }));
   return m;
 }
-let noteMap = defaultMap();
-try { const s = JSON.parse(localStorage.getItem('padmap') || 'null'); if (s) noteMap = s; } catch (e) {}
-const saveMap = () => { try { localStorage.setItem('padmap', JSON.stringify(noteMap)); } catch (e) {} };
+function cellsFor(name, mode) {
+  const L = LAYOUTS[name], out = [];
+  for (let r = 0; r < L.rows; r++) for (let c = 0; c < L.cols; c++) out.push(L.cell(r, c));
+  return out;
+}
+let noteMode = 'drum';   // 'prog' once the page puts a Launchpad into Programmer mode
+let maps = { drum: defaultMap('drum'), prog: defaultMap('prog') };
+try {
+  const s = JSON.parse(localStorage.getItem('padmaps3') || 'null'); if (s && s.drum && s.prog) maps = s;
+  if (localStorage.getItem('notemode') === 'prog') noteMode = 'prog';
+} catch (e) {}
+let noteMap = maps[noteMode];
+const saveMap = () => { try { localStorage.setItem('padmaps3', JSON.stringify(maps)); localStorage.setItem('notemode', noteMode); } catch (e) {} };
+function setNoteMode(m) { noteMode = m; noteMap = maps[m]; saveMap(); $('modeSel').value = m; if (cells.length) renderGrid(); lightAll(); }
 
 // ---- Audio: everything synthesized, no samples to load
 let ac, master, noiseBuf;
@@ -199,29 +256,45 @@ const VOICES = {
   zap:   (t, v) => tone(t, 'sawtooth', 1400, 90, v * 0.25, 0.18, 0.15),
 };
 
-// ---- Grid UI (render top row first so the bottom row of the kit sits at the bottom)
+// ---- Grid UI: drawn for the current layout, top row first so the controller's bottom row sits at the bottom
 const gridEl = document.getElementById('grid');
-const padEls = [];
-for (let r = 3; r >= 0; r--) for (let c = 0; c < 4; c++) {
-  const i = r * 4 + c, k = KIT[i];
-  const el = document.createElement('div');
-  el.className = 'pad'; el.tabIndex = 0; el.style.setProperty('--c', k.c);
-  el.innerHTML = `<span class="name">${k.name}</span><span class="meta"><span>${KEYS[i].toUpperCase()}</span><span class="notes"></span></span>`;
-  el.addEventListener('pointerdown', e => { e.preventDefault(); if (learning) return pickLearn(i); initAudio(); hit(i, 0.85, 'mouse'); });
-  gridEl.appendChild(el); padEls[i] = el;
-}
-function renderNotes() {
-  const by = KIT.map(() => []);
-  Object.entries(noteMap).forEach(([n, i]) => by[i] && by[i].push(n));
-  padEls.forEach((el, i) => el.querySelector('.notes').textContent = by[i].sort((a, b) => a - b).join(' '));
-}
-renderNotes();
+let layoutName = 'kit', cells = [], padEls = [];
+const soundOf = cell => { for (const n of cell.notes) if (noteMap[n] !== undefined) return noteMap[n]; return null; };
 
-const timers = [];
-function flash(i) {
-  const el = padEls[i];
+function renderGrid() {
+  const L = LAYOUTS[layoutName];
+  cells = cellsOf(layoutName);
+  gridEl.innerHTML = ''; padEls = [];
+  gridEl.style.gridTemplateColumns = `repeat(${L.cols}, minmax(0, 1fr))`;
+  gridEl.className = 'grid cols' + L.cols;
+  const order = [...cells.keys()].sort((a, b) => cells[b].r - cells[a].r || cells[a].c - cells[b].c);
+  order.forEach(ci => {
+    const cell = cells[ci], i = soundOf(cell), k = i === null ? null : KIT[i];
+    const el = document.createElement('div');
+    el.className = 'pad' + (k ? '' : ' empty'); el.tabIndex = 0;
+    if (k) el.style.setProperty('--c', k.c);
+    const key = layoutName === 'kit' && k ? KEYS[i].toUpperCase() : '';
+    el.innerHTML = `<span class="name">${k ? k.name : ''}</span><span class="meta"><span>${key}</span><span class="notes">${cell.notes.join(' ')}</span></span>`;
+    el.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      if (learning) return pickLearn(ci);
+      if (i === null) return;
+      initAudio(); hit(i, 0.85, 'mouse', cell.notes[0]);
+    });
+    gridEl.appendChild(el); padEls[ci] = el;
+  });
+  $('layoutName').textContent = L.label;
+}
+
+const timers = new Map();
+function flashEl(el) {
   el.classList.remove('hit'); void el.offsetWidth; el.classList.add('hit');
-  clearTimeout(timers[i]); timers[i] = setTimeout(() => el.classList.remove('hit'), 90);
+  clearTimeout(timers.get(el)); timers.set(el, setTimeout(() => el.classList.remove('hit'), 90));
+}
+function flash(i, note) {
+  cells.forEach((cell, ci) => {
+    if (note !== undefined ? cell.notes.includes(note) : soundOf(cell) === i) flashEl(padEls[ci]);
+  });
 }
 
 // ---- Hit log: timestamps relative to the first hit, ready for later timing scoring
@@ -239,11 +312,11 @@ function logHit(i, vel, src) {
 }
 document.getElementById('clearLog').onclick = () => { hits = []; t0 = null; logEl.innerHTML = ''; document.getElementById('hitCount').textContent = '0'; document.getElementById('bpm').textContent = '–'; };
 
-function hit(i, vel, src) {
+function hit(i, vel, src, note) {
   if (!ac) initAudio();
   const v = Math.max(0.15, vel);
   VOICES[KIT[i].id](ac.currentTime + 0.002, v);
-  flash(i); ledHit(i); logHit(i, vel, src);
+  flash(i, note); ledHit(i, note); logHit(i, vel, src);
 }
 
 // ---- Keyboard fallback
@@ -303,9 +376,30 @@ function refreshPorts() {
   }
   if (ins.length) setStatus(ins.length + ' input' + (ins.length > 1 ? 's' : '') + ': ' + ins.map(p => p.name).join(', '), 'on');
   else setStatus('Connected, but no devices found. Plug one in.', 'err');
+  autoLayout();
   lightAll();
 }
 $('outSel').onchange = lightAll;
+$('inSel').onchange = autoLayout;
+
+// ---- Layout: follow the connected controller unless the player picks one
+function detectLayout() {
+  if (!midi) return 'kit';
+  const sel = $('inSel').value;
+  const names = [...midi.inputs.values()].filter(p => sel === 'all' || p.id === sel).map(p => p.name).join(' ');
+  if (/launchpad|\blp(x|mini|pro)/i.test(names)) return 'launchpad';
+  if (/launchkey|\blk(mini)?\b/i.test(names)) return 'launchkey';
+  return 'kit';
+}
+function autoLayout() {
+  const choice = $('layoutSel').value;
+  const next = choice === 'auto' ? detectLayout() : choice;
+  if (next !== layoutName || !cells.length) { layoutName = next; renderGrid(); }
+}
+$('modeSel').value = noteMode;
+$('modeSel').onchange = () => setNoteMode($('modeSel').value);
+$('layoutSel').onchange = () => { try { localStorage.setItem('layout', $('layoutSel').value); } catch (e) {} autoLayout(); };
+try { const l = localStorage.getItem('layout'); if (l && $('layoutSel').querySelector(`option[value="${l}"]`)) $('layoutSel').value = l; } catch (e) {}
 
 function onMidi(e) {
   const sel = $('inSel').value;
@@ -316,7 +410,7 @@ function onMidi(e) {
   if (learning && learnPad !== null) { assignLearn(note); return; }
   const i = noteMap[note];
   if (i === undefined) { setStatus('Unmapped note ' + note + ' (use Learn pads to assign it)', 'on'); return; }
-  hit(i, vel / 127, 'midi');
+  hit(i, vel / 127, 'midi', note);
 }
 
 // ---- Launchpad LEDs (Programmer mode: note-on to the pad's note, velocity = palette colour)
@@ -324,11 +418,13 @@ function outPort() { const id = $('outSel').value; return id && midi ? midi.outp
 function padNotesFor(i) { return Object.entries(noteMap).filter(([, v]) => v === i).map(([n]) => +n); }
 function lightAll() {
   const o = outPort(); if (!o) return;
+  // Clear the whole Programmer-mode grid first so pads without a sound go dark
+  for (let r = 1; r <= 8; r++) for (let c = 1; c <= 8; c++) o.send([0x90, 10 * r + c, 0]);
   KIT.forEach((k, i) => padNotesFor(i).forEach(n => o.send([0x90, n, k.led])));
 }
-function ledHit(i) {
+function ledHit(i, note) {
   const o = outPort(); if (!o) return;
-  const notes = padNotesFor(i);
+  const notes = note !== undefined ? [note] : padNotesFor(i);
   notes.forEach(n => o.send([0x90, n, 3]));            // white while hit
   setTimeout(() => notes.forEach(n => o.send([0x90, n, KIT[i].led])), 110);
 }
@@ -343,17 +439,24 @@ $('progBtn').onclick = async () => {
   if (!sysexOK) { showBanner('Switching modes needs SysEx permission, which the browser didn’t grant. On the Launchpad, hold Session and press the Programmer mode button instead (see your model’s manual).'); return; }
   // Device IDs: 0x0C Launchpad X, 0x0D Mini MK3, 0x0E Pro MK3. Sending all three is harmless.
   [0x0C, 0x0D, 0x0E].forEach(dev => { try { o.send([0xF0, 0x00, 0x20, 0x29, 0x02, dev, 0x0E, 0x01, 0xF7]); } catch (e) {} });
+  setNoteMode('prog');
   setTimeout(lightAll, 150);
   showBanner('');
 };
 
 // ---- Learn mode
 let learning = false, learnPad = null;
-function pickLearn(i) { learnPad = i; padEls.forEach((el, j) => el.classList.toggle('learning', j === i)); $('learnHint').textContent = 'Now hit the controller pad for “' + KIT[i].name + '”.'; }
+function pickLearn(ci) {
+  const i = soundOf(cells[ci]);
+  if (i === null) { $('learnHint').textContent = 'That pad has no sound yet. Click a pad that has the sound you want, then hit the controller pad to give it that sound.'; return; }
+  learnPad = i; padEls.forEach((el, j) => el.classList.toggle('learning', j === ci));
+  $('learnHint').textContent = 'Now hit the controller pad that should play ' + KIT[i].name + '.';
+}
 function assignLearn(note) {
-  noteMap[note] = learnPad; saveMap(); renderNotes(); lightAll();
-  const i = learnPad; hit(i, 0.8, 'midi');
-  learnPad = null; padEls.forEach(el => el.classList.remove('learning'));
+  const i = learnPad;
+  noteMap[note] = i; saveMap(); renderGrid(); lightAll();
+  hit(i, 0.8, 'midi', note);
+  learnPad = null;
   $('learnHint').textContent = 'Note ' + note + ' now plays ' + KIT[i].name + '. Click another pad, or press Done.';
 }
 $('learnBtn').onclick = () => {
@@ -363,7 +466,8 @@ $('learnBtn').onclick = () => {
   padEls.forEach(el => el.classList.remove('learning'));
   $('learnHint').textContent = learning ? 'Click a pad on screen, then hit the controller pad you want for it.' : 'Mapping saved in this browser.';
 };
-$('resetMapBtn').onclick = () => { noteMap = defaultMap(); saveMap(); renderNotes(); lightAll(); };
+$('resetMapBtn').onclick = () => { maps = { drum: defaultMap('drum'), prog: defaultMap('prog') }; noteMap = maps[noteMode]; saveMap(); renderGrid(); lightAll(); };
+autoLayout();
 </script>
 
 </body></html>
