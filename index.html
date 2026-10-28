@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<style>body{margin:0}[hidden]{display:none!important}</style>
+<title>Pad Grid Sandbox</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700&family=Figtree:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: hardware-style console. Controller panel on the left, a big 4x4 pad surface centre stage, hit log beside it. Single dark look by choice: pads glow like LEDs. */
+:root {
+  --bg: #121417;
+  --panel: #1b1e23;
+  --line: #2b3038;
+  --fg: #e7e9ec;
+  --muted: #8b939f;
+  --accent: #ffb238;
+  --ok: #4fd18b;
+  --warn: #ff6b5a;
+  --pad-off: #23272e;
+  --display: "Unbounded", "Arial Black", system-ui, sans-serif;
+  --body: "Figtree", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  color-scheme: dark;
+}
+html, body { background: var(--bg); color: var(--fg); }
+body { font-family: var(--body); font-size: 15px; line-height: 1.5; }
+.wrap { max-width: 1120px; margin: 0 auto; padding-block: 24px 48px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 20px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 20px; }
+h1 { font-family: var(--display); font-weight: 700; font-size: 1.6rem; letter-spacing: -0.01em; margin: 0; text-wrap: balance; }
+h1 span { color: var(--accent); }
+.sub { color: var(--muted); margin: 0; max-width: 60ch; }
+h2 { font-family: var(--body); font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); margin: 0 0 10px; }
+.main { display: grid; grid-template-columns: 280px minmax(0, 1fr) 260px; gap: 20px; align-items: start; }
+@media (max-width: 980px) { .main { grid-template-columns: minmax(0, 1fr); } }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: grid; gap: 14px; min-width: 0; }
+.status { display: flex; align-items: center; gap: 8px; font-size: 0.9rem; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+.dot.on { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+.dot.err { background: var(--warn); }
+label { font-size: 0.82rem; color: var(--muted); display: grid; gap: 4px; }
+select, button { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; }
+select { width: 100%; }
+button { cursor: pointer; font-weight: 600; }
+button:hover { border-color: var(--muted); }
+button:focus-visible, select:focus-visible, .pad:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button.primary { background: var(--accent); color: #1a1205; border-color: var(--accent); }
+button.active { border-color: var(--accent); color: var(--accent); }
+.row { display: flex; flex-wrap: wrap; gap: 8px; }
+.hint { font-size: 0.8rem; color: var(--muted); margin: 0; }
+.hint code, .mono { font-family: var(--mono); font-size: 0.78rem; }
+.stage { display: grid; gap: 12px; justify-items: center; }
+.grid { box-sizing: border-box; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; width: min(100%, 520px); padding: 14px; background: #0c0d10; border-radius: 14px; border: 1px solid var(--line); }
+.pad { box-sizing: border-box; min-width: 0; overflow: hidden; aspect-ratio: 1; max-width: 100%; border-radius: 8px; border: 1px solid #00000066; background: var(--pad-off); position: relative; display: flex; flex-direction: column; justify-content: space-between; padding: 8px; cursor: pointer; user-select: none; -webkit-user-select: none; touch-action: none; transition: background 140ms ease-out, box-shadow 140ms ease-out, transform 60ms; box-shadow: inset 0 -3px 0 var(--c, #555); }
+.pad .name { font-weight: 600; font-size: clamp(0.66rem, 1.6vw, 0.86rem); line-height: 1.15; }
+.pad .meta { font-family: var(--mono); font-size: 0.66rem; color: var(--muted); display: flex; justify-content: space-between; gap: 4px; }
+.pad.hit { background: var(--c); box-shadow: 0 0 22px var(--c); transform: scale(0.97); transition: none; color: #111; }
+.pad.hit .meta { color: #111a; }
+.pad.learning { outline: 2px dashed var(--accent); outline-offset: 2px; }
+.legend { color: var(--muted); font-size: 0.8rem; text-align: center; margin: 0; }
+.log { font-family: var(--mono); font-size: 0.76rem; display: grid; gap: 2px; max-height: 340px; overflow-y: auto; margin: 0; padding: 0; list-style: none; font-variant-numeric: tabular-nums; }
+.log li { display: grid; grid-template-columns: 62px minmax(0, 1fr) 42px; gap: 6px; padding: 2px 0; border-bottom: 1px solid var(--line); }
+.log li .v { text-align: right; color: var(--muted); }
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-variant-numeric: tabular-nums; }
+.stat { background: var(--bg); border-radius: 6px; padding: 8px; }
+.stat b { display: block; font-family: var(--mono); font-size: 1.1rem; }
+.stat span { font-size: 0.72rem; color: var(--muted); }
+.banner { background: #2a1d10; border: 1px solid #5a3e1a; color: var(--fg); border-radius: 8px; padding: 10px 12px; font-size: 0.85rem; }
+@media (prefers-reduced-motion: reduce) { .pad, .pad.hit { transition: none; transform: none; } }
+</style>
+
+</head><body>
+<div class="wrap">
+  <header>
+    <h1>Pad Grid <span>Sandbox</span></h1>
+    <p class="sub">Plug in a Launchpad or Launchkey, hit Connect, and play the kit. No controller? Use the keyboard or tap the pads.</p>
+  </header>
+
+  <div class="main">
+    <section class="panel" aria-labelledby="ctl-h">
+      <h2 id="ctl-h">Controller</h2>
+      <div class="status"><span class="dot" id="midiDot"></span><span id="midiStatus">Not connected</span></div>
+      <button class="primary" id="connectBtn">Connect MIDI &amp; start sound</button>
+      <div id="midiBanner" class="banner" hidden></div>
+      <label for="inSel">Input (pads)
+        <select id="inSel"><option value="all">All inputs</option></select>
+      </label>
+      <label for="outSel">LED output (Launchpad)
+        <select id="outSel"><option value="">None</option></select>
+      </label>
+      <div class="row">
+        <button id="progBtn" title="Switches a Launchpad X / Mini MK3 / Pro MK3 into Programmer mode so this page can light its pads">Launchpad: Programmer mode</button>
+        <button id="ledTestBtn">Light pads</button>
+      </div>
+      <h2>Pad mapping</h2>
+      <div class="row">
+        <button id="learnBtn">Learn pads</button>
+        <button id="resetMapBtn">Reset mapping</button>
+      </div>
+      <p class="hint" id="learnHint">Default: notes <code>36–51</code> (Launchpad Drum mode, Launchkey drum pads) and Launchpad Programmer mode bottom-left 4×4 (<code>11–44</code>). Learn: click a pad on screen, then hit the pad you want on your controller.</p>
+    </section>
+
+    <section class="stage" aria-label="Drum pads">
+      <div class="grid" id="grid"></div>
+      <p class="legend">Keyboard: <span class="mono">1 2 3 4 / Q W E R / A S D F / Z X C V</span> (top row to bottom row)</p>
+    </section>
+
+    <section class="panel" aria-labelledby="log-h">
+      <h2 id="log-h">Hits</h2>
+      <div class="stats">
+        <div class="stat"><b id="hitCount">0</b><span>hits</span></div>
+        <div class="stat"><b id="bpm">–</b><span>avg interval (ms)</span></div>
+      </div>
+      <ul class="log" id="log"></ul>
+      <button id="clearLog">Clear</button>
+    </section>
+  </div>
+</div>
+
+<script>
+// ---- Kit: listed bottom row first, left to right (finger drumming puts kick/snare under the strong fingers)
+const KIT = [
+  { id: 'kick',  name: 'Kick',        c: '#ff5d5d', led: 5 },
+  { id: 'snare', name: 'Snare',       c: '#ffb238', led: 9 },
+  { id: 'chh',   name: 'Closed hat',  c: '#ffe14d', led: 13 },
+  { id: 'ohh',   name: 'Open hat',    c: '#c8f04d', led: 17 },
+  { id: 'kick2', name: 'Kick low',    c: '#ff7b9c', led: 4 },
+  { id: 'rim',   name: 'Rim',         c: '#ff9a5a', led: 84 },
+  { id: 'clap',  name: 'Clap',        c: '#ffd27a', led: 12 },
+  { id: 'phh',   name: 'Pedal hat',   c: '#9be36b', led: 21 },
+  { id: 'tomL',  name: 'Low tom',     c: '#4fd1c5', led: 33 },
+  { id: 'tomM',  name: 'Mid tom',     c: '#4fb8ff', led: 37 },
+  { id: 'tomH',  name: 'High tom',    c: '#7a8cff', led: 45 },
+  { id: 'ride',  name: 'Ride',        c: '#b48cff', led: 49 },
+  { id: 'crash', name: 'Crash',       c: '#e37bff', led: 53 },
+  { id: 'cow',   name: 'Cowbell',     c: '#ff8ad8', led: 57 },
+  { id: 'shake', name: 'Shaker',      c: '#d6dbe3', led: 3 },
+  { id: 'zap',   name: 'Zap',         c: '#5effc0', led: 29 },
+];
+const KEYS = ['z','x','c','v','a','s','d','f','q','w','e','r','1','2','3','4'];
+// Launchpad Programmer mode: note = 10*row + col (row/col from 1, bottom-left = 11)
+const progNote = i => 10 * (Math.floor(i / 4) + 1) + (i % 4) + 1;
+
+function defaultMap() {
+  const m = {};
+  KIT.forEach((_, i) => { m[36 + i] = i; m[progNote(i)] = i; });
+  return m;
+}
+let noteMap = defaultMap();
+try { const s = JSON.parse(localStorage.getItem('padmap') || 'null'); if (s) noteMap = s; } catch (e) {}
+const saveMap = () => { try { localStorage.setItem('padmap', JSON.stringify(noteMap)); } catch (e) {} };
+
+// ---- Audio: everything synthesized, no samples to load
+let ac, master, noiseBuf;
+function initAudio() {
+  if (ac) { ac.resume(); return; }
+  ac = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
+  master = ac.createDynamicsCompressor();
+  master.threshold.value = -10; master.ratio.value = 4;
+  master.connect(ac.destination);
+  noiseBuf = ac.createBuffer(1, ac.sampleRate * 2, ac.sampleRate);
+  const d = noiseBuf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+}
+function env(g, t, peak, dec, att = 0.001) {
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(peak, t + att);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dec);
+}
+function noise(t, dur, type, freq, q, peak, dec) {
+  const s = ac.createBufferSource(); s.buffer = noiseBuf;
+  const f = ac.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = q;
+  const g = ac.createGain(); env(g, t, peak, dec);
+  s.connect(f).connect(g).connect(master); s.start(t); s.stop(t + dur);
+  return g;
+}
+function tone(t, type, f0, f1, peak, dec, sweep = 0.05) {
+  const o = ac.createOscillator(); o.type = type;
+  o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, t + sweep);
+  const g = ac.createGain(); env(g, t, peak, dec);
+  o.connect(g).connect(master); o.start(t); o.stop(t + dec + 0.05);
+}
+let openHatGain = null;
+const VOICES = {
+  kick:  (t, v) => tone(t, 'sine', 160, 45, v, 0.45, 0.08),
+  kick2: (t, v) => { tone(t, 'sine', 110, 35, v, 0.7, 0.12); tone(t, 'triangle', 60, 40, v * 0.4, 0.5); },
+  snare: (t, v) => { tone(t, 'triangle', 240, 180, v * 0.5, 0.12); noise(t, 0.3, 'highpass', 1500, 0.7, v * 0.7, 0.2); },
+  clap:  (t, v) => { [0, 0.011, 0.022].forEach(o => noise(t + o, 0.05, 'bandpass', 1200, 1.5, v * 0.7, 0.03)); noise(t + 0.03, 0.3, 'bandpass', 1200, 1.2, v * 0.6, 0.18); },
+  rim:   (t, v) => { tone(t, 'square', 1700, 1600, v * 0.3, 0.03); noise(t, 0.05, 'bandpass', 3000, 3, v * 0.4, 0.03); },
+  chh:   (t, v) => { if (openHatGain) { openHatGain.gain.cancelScheduledValues(t); openHatGain.gain.setTargetAtTime(0.0001, t, 0.01); } noise(t, 0.1, 'highpass', 8000, 1, v * 0.5, 0.05); },
+  phh:   (t, v) => { if (openHatGain) { openHatGain.gain.cancelScheduledValues(t); openHatGain.gain.setTargetAtTime(0.0001, t, 0.01); } noise(t, 0.12, 'bandpass', 7000, 2, v * 0.45, 0.08); },
+  ohh:   (t, v) => { openHatGain = noise(t, 0.8, 'highpass', 7000, 1, v * 0.45, 0.55); },
+  tomL:  (t, v) => tone(t, 'sine', 140, 80, v * 0.9, 0.45, 0.2),
+  tomM:  (t, v) => tone(t, 'sine', 200, 120, v * 0.9, 0.38, 0.18),
+  tomH:  (t, v) => tone(t, 'sine', 280, 170, v * 0.9, 0.32, 0.16),
+  ride:  (t, v) => { [340, 512, 761, 913].forEach(f => tone(t, 'square', f * 2, f * 2, v * 0.05, 1.2)); noise(t, 1.2, 'highpass', 9000, 1, v * 0.18, 1.0); },
+  crash: (t, v) => noise(t, 2, 'highpass', 4000, 0.6, v * 0.55, 1.6),
+  cow:   (t, v) => { tone(t, 'square', 540, 540, v * 0.18, 0.25); tone(t, 'square', 800, 800, v * 0.18, 0.25); },
+  shake: (t, v) => noise(t, 0.12, 'highpass', 6000, 1, v * 0.35, 0.09),
+  zap:   (t, v) => tone(t, 'sawtooth', 1400, 90, v * 0.25, 0.18, 0.15),
+};
+
+// ---- Grid UI (render top row first so the bottom row of the kit sits at the bottom)
+const gridEl = document.getElementById('grid');
+const padEls = [];
+for (let r = 3; r >= 0; r--) for (let c = 0; c < 4; c++) {
+  const i = r * 4 + c, k = KIT[i];
+  const el = document.createElement('div');
+  el.className = 'pad'; el.tabIndex = 0; el.style.setProperty('--c', k.c);
+  el.innerHTML = `<span class="name">${k.name}</span><span class="meta"><span>${KEYS[i].toUpperCase()}</span><span class="notes"></span></span>`;
+  el.addEventListener('pointerdown', e => { e.preventDefault(); if (learning) return pickLearn(i); initAudio(); hit(i, 0.85, 'mouse'); });
+  gridEl.appendChild(el); padEls[i] = el;
+}
+function renderNotes() {
+  const by = KIT.map(() => []);
+  Object.entries(noteMap).forEach(([n, i]) => by[i] && by[i].push(n));
+  padEls.forEach((el, i) => el.querySelector('.notes').textContent = by[i].sort((a, b) => a - b).join(' '));
+}
+renderNotes();
+
+const timers = [];
+function flash(i) {
+  const el = padEls[i];
+  el.classList.remove('hit'); void el.offsetWidth; el.classList.add('hit');
+  clearTimeout(timers[i]); timers[i] = setTimeout(() => el.classList.remove('hit'), 90);
+}
+
+// ---- Hit log: timestamps relative to the first hit, ready for later timing scoring
+const logEl = document.getElementById('log');
+let hits = [], t0 = null;
+function logHit(i, vel, src) {
+  const now = performance.now(); if (t0 === null) t0 = now;
+  hits.push(now);
+  const li = document.createElement('li');
+  li.innerHTML = `<span>${((now - t0) / 1000).toFixed(3)}s</span><span>${KIT[i].name}</span><span class="v">${src === 'midi' ? Math.round(vel * 127) : src}</span>`;
+  logEl.prepend(li); while (logEl.children.length > 200) logEl.lastChild.remove();
+  document.getElementById('hitCount').textContent = hits.length;
+  const recent = hits.slice(-9);
+  if (recent.length > 1) document.getElementById('bpm').textContent = Math.round((recent.at(-1) - recent[0]) / (recent.length - 1));
+}
+document.getElementById('clearLog').onclick = () => { hits = []; t0 = null; logEl.innerHTML = ''; document.getElementById('hitCount').textContent = '0'; document.getElementById('bpm').textContent = '–'; };
+
+function hit(i, vel, src) {
+  if (!ac) initAudio();
+  const v = Math.max(0.15, vel);
+  VOICES[KIT[i].id](ac.currentTime + 0.002, v);
+  flash(i); ledHit(i); logHit(i, vel, src);
+}
+
+// ---- Keyboard fallback
+const held = new Set();
+addEventListener('keydown', e => {
+  if (e.repeat || e.metaKey || e.ctrlKey || e.target.tagName === 'SELECT') return;
+  const i = KEYS.indexOf(e.key.toLowerCase());
+  if (i < 0 || held.has(i)) return;
+  held.add(i); hit(i, 0.85, 'key');
+});
+addEventListener('keyup', e => held.delete(KEYS.indexOf(e.key.toLowerCase())));
+
+// ---- Web MIDI
+let midi = null, sysexOK = false;
+const $ = id => document.getElementById(id);
+function setStatus(text, state) { $('midiStatus').textContent = text; $('midiDot').className = 'dot' + (state ? ' ' + state : ''); }
+function showBanner(html) { $('midiBanner').innerHTML = html; $('midiBanner').hidden = !html; }
+
+$('connectBtn').onclick = async () => {
+  initAudio();
+  if (!navigator.requestMIDIAccess) {
+    setStatus('Web MIDI not available', 'err');
+    showBanner('This browser or page can’t reach MIDI devices. Use Chrome or Edge (desktop), and open the downloaded HTML file directly or from <code>localhost</code>. Keyboard and tapping still work.');
+    return;
+  }
+  try { midi = await navigator.requestMIDIAccess(); }
+  catch (e) {
+    setStatus('MIDI access blocked', 'err');
+    const local = location.protocol === 'file:';
+    showBanner('The browser refused MIDI access (' + (e.name || 'error') + '). ' +
+      (local ? 'Chrome often blocks MIDI for files opened from disk. Serve this file from <code>localhost</code> instead (see the instructions you were sent). '
+             : 'Click the site settings icon left of the address bar, set <b>MIDI device control</b> to Allow, then reload. ') +
+      'Keyboard and tapping still work.');
+    return;
+  }
+  showBanner('');
+  midi.onstatechange = refreshPorts;
+  refreshPorts();
+  $('connectBtn').textContent = 'Sound on, MIDI connected';
+};
+
+function refreshPorts() {
+  const inSel = $('inSel'), outSel = $('outSel');
+  const prevIn = inSel.value, prevOut = outSel.value;
+  inSel.innerHTML = '<option value="all">All inputs</option>';
+  outSel.innerHTML = '<option value="">None</option>';
+  const ins = [...midi.inputs.values()], outs = [...midi.outputs.values()];
+  ins.forEach(p => { inSel.add(new Option(p.name, p.id)); p.onmidimessage = onMidi; });
+  outs.forEach(p => outSel.add(new Option(p.name, p.id)));
+  if ([...inSel.options].some(o => o.value === prevIn)) inSel.value = prevIn;
+  if (prevOut && [...outSel.options].some(o => o.value === prevOut)) outSel.value = prevOut;
+  else {
+    // Prefer the Launchpad port that carries LED messages (named "MIDI" / "LPX MIDI", not "DAW")
+    const lp = outs.filter(p => /launchpad|lp(x|mini|pro)/i.test(p.name));
+    const pick = lp.find(p => !/daw/i.test(p.name)) || lp[0];
+    if (pick) outSel.value = pick.id;
+  }
+  if (ins.length) setStatus(ins.length + ' input' + (ins.length > 1 ? 's' : '') + ': ' + ins.map(p => p.name).join(', '), 'on');
+  else setStatus('Connected, but no devices found. Plug one in.', 'err');
+  lightAll();
+}
+$('outSel').onchange = lightAll;
+
+function onMidi(e) {
+  const sel = $('inSel').value;
+  if (sel !== 'all' && e.target.id !== sel) return;
+  const [st, note, vel] = e.data, cmd = st & 0xf0;
+  // Only note-ons; Launchpad top/side buttons send CC and are ignored
+  if (cmd !== 0x90 || vel === 0) return;
+  if (learning && learnPad !== null) { assignLearn(note); return; }
+  const i = noteMap[note];
+  if (i === undefined) { setStatus('Unmapped note ' + note + ' (use Learn pads to assign it)', 'on'); return; }
+  hit(i, vel / 127, 'midi');
+}
+
+// ---- Launchpad LEDs (Programmer mode: note-on to the pad's note, velocity = palette colour)
+function outPort() { const id = $('outSel').value; return id && midi ? midi.outputs.get(id) : null; }
+function padNotesFor(i) { return Object.entries(noteMap).filter(([, v]) => v === i).map(([n]) => +n); }
+function lightAll() {
+  const o = outPort(); if (!o) return;
+  KIT.forEach((k, i) => padNotesFor(i).forEach(n => o.send([0x90, n, k.led])));
+}
+function ledHit(i) {
+  const o = outPort(); if (!o) return;
+  const notes = padNotesFor(i);
+  notes.forEach(n => o.send([0x90, n, 3]));            // white while hit
+  setTimeout(() => notes.forEach(n => o.send([0x90, n, KIT[i].led])), 110);
+}
+$('ledTestBtn').onclick = () => { if (!outPort()) { showBanner('Pick a Launchpad under LED output first.'); return; } lightAll(); };
+$('progBtn').onclick = async () => {
+  const o = outPort();
+  if (!o) { showBanner('Connect MIDI and pick a Launchpad under LED output first.'); return; }
+  if (!sysexOK) {
+    try { const m2 = await navigator.requestMIDIAccess({ sysex: true }); midi = m2; sysexOK = true; midi.onstatechange = refreshPorts; refreshPorts(); return $('progBtn').onclick(); }
+    catch (e) {}
+  }
+  if (!sysexOK) { showBanner('Switching modes needs SysEx permission, which the browser didn’t grant. On the Launchpad, hold Session and press the Programmer mode button instead (see your model’s manual).'); return; }
+  // Device IDs: 0x0C Launchpad X, 0x0D Mini MK3, 0x0E Pro MK3. Sending all three is harmless.
+  [0x0C, 0x0D, 0x0E].forEach(dev => { try { o.send([0xF0, 0x00, 0x20, 0x29, 0x02, dev, 0x0E, 0x01, 0xF7]); } catch (e) {} });
+  setTimeout(lightAll, 150);
+  showBanner('');
+};
+
+// ---- Learn mode
+let learning = false, learnPad = null;
+function pickLearn(i) { learnPad = i; padEls.forEach((el, j) => el.classList.toggle('learning', j === i)); $('learnHint').textContent = 'Now hit the controller pad for “' + KIT[i].name + '”.'; }
+function assignLearn(note) {
+  noteMap[note] = learnPad; saveMap(); renderNotes(); lightAll();
+  const i = learnPad; hit(i, 0.8, 'midi');
+  learnPad = null; padEls.forEach(el => el.classList.remove('learning'));
+  $('learnHint').textContent = 'Note ' + note + ' now plays ' + KIT[i].name + '. Click another pad, or press Done.';
+}
+$('learnBtn').onclick = () => {
+  learning = !learning; learnPad = null;
+  $('learnBtn').textContent = learning ? 'Done' : 'Learn pads';
+  $('learnBtn').classList.toggle('active', learning);
+  padEls.forEach(el => el.classList.remove('learning'));
+  $('learnHint').textContent = learning ? 'Click a pad on screen, then hit the controller pad you want for it.' : 'Mapping saved in this browser.';
+};
+$('resetMapBtn').onclick = () => { noteMap = defaultMap(); saveMap(); renderNotes(); lightAll(); };
+</script>
+
+</body></html>
